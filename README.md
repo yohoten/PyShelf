@@ -19,6 +19,10 @@
 C:\Users\yohoten\AppData\Local\Programs\Python\Python312\python.exe app.py
 ```
 
+![](https://i.imgs.ovh/2026/09/25/aec6cbde019dc92f399f21feef74f95c.jpg)
+
+![](https://i.imgs.ovh/2026/09/25/f6bc8a3345aed1fd293c63677792a5f5.jpg)
+
 ## 使用说明
 
 | 操作 | 方式 |
