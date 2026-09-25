@@ -34,9 +34,11 @@ C:\Users\yohoten\AppData\Local\Programs\Python\Python312\python.exe app.py
 | 高亮 | 阅读页面上按住左键拖框 → 输入备注（可选）；琥珀色叠加显示，不改原 PDF |
 | 目录/书签/高亮 | 阅读界面左侧栏三个标签页，双击条目跳转 |
 | 翻页 | ←/→、PageUp/PageDown、滚轮；Home/End 首末页 |
-| 缩放 | 工具栏 ＋/－（50%–300%）；「跳页」输入页码直达 |
+| 缩放 | 工具栏 ＋/－ 或 `+`/`-` 键或 **Ctrl+滚轮**（50%–300%）；「跳页」输入页码直达 |
+| 收藏快捷键 | 阅读中按 `F` 切换当前书收藏 |
+| 主题 | 顶栏「☾ 午后书房」切换深/浅主题（重启生效） |
 | 烛光模式 | 工具栏「烛光」按钮，暖色夜间阅读 |
-| 阅读历史 | 自动记录进度，封面左上角显示「在读 N%」，重开自动续读 |
+| 阅读历史 | 自动记录进度，封面左上角显示「在读 N%」，重开自动续读；状态栏显示今日/累计阅读时长 |
 | 搜索 | 顶栏输入书名实时过滤 |
 | 书源检索 | 顶栏「书源检索」进入，见下节 |
 
@@ -68,20 +70,49 @@ C:\Users\yohoten\AppData\Local\Programs\Python\Python312\python.exe app.py
 ```
 app.ico             应用图标（多分辨率 16–128px，标题栏/任务栏/Alt-Tab）
 launcher.bat        启动脚本（GBK+CRLF，自动探测解释器，支持 debug 模式）
+build.bat           打包脚本（PyInstaller → dist/PyShelf.exe 单文件）
+PyShelf.spec        PyInstaller 配置
 app.py              入口（书架/阅读/书源切换、后台扫描与下载、持久化）
-core/library.py     Book 数据模型 + data/library.json 读写
+core/models.py      Book/Bookmark/Highlight 数据模型
+core/library.py     Library 门面（SQLite 后端 + 旧 JSON 自动迁移 + 阅读会话）
+core/storage.py     SQLite 存储层（WAL、FTS5 书名索引、reading_sessions 统计）
 core/scanner.py     目录扫描、书名清洗、封面生成
+core/engines.py     DocumentEngine 协议 + 引擎工厂（PDF / TXT / MD）
 core/pdf_engine.py  PyMuPDF 渲染/目录/高亮叠加/烛光滤镜
 core/sources.py     书源引擎（GitHub/arXiv/Gutenberg/直链/自定义规则）
 core/downloader.py  后台下载器（进度回报、备用通道）
-ui/theme.py         配色/DPI/字体/程序化木纹纹理/圆角封面渲染
+ui/theme.py         双主题（烛光·深 / 午后书房·浅）、DPI、木纹纹理、封面渲染
 ui/shelf_view.py    Canvas 拟物书架（纹理书架、悬停放大）
 ui/reader_view.py   阅读器（超采样渲染/翻页/缩放/书签/拖框高亮）
 ui/sidebar.py       目录/书签/高亮侧栏
 ui/source_view.py   书源检索面板
-data/               运行时生成：library.json、settings.json、covers/*.png
+tests/              pytest 测试（scanner 清洗 / storage 迁移与统计 / engines 分派）
+.github/workflows/  CI：跑测试 + PyInstaller 打包并上传产物
+data/               运行时生成：library.db（SQLite）、settings.json、covers/*.png
 ```
 
-阅读数据（收藏/书签/高亮/进度）全部存在本目录 `data/` 下，原 PDF 文件不做任何修改。
-# PyShelf
-# PyShelf
+阅读数据（收藏/书签/高亮/进度/时长统计）全部存在本目录 `data/` 下，原 PDF 文件不做任何修改。
+
+## 数据存储（v1.2 起 SQLite）
+
+- 数据层已由 `library.json` 迁移至 `data/library.db`（SQLite，WAL 模式）：
+  写入原子、规模化后无性能退化，并为全文搜索与统计功能提供地基。
+- **旧版升级自动迁移**：首次启动检测到旧 `library.json` 且库为空时一次性导入，
+  原 JSON 文件保留在原处作为回滚备份。
+- 表结构：`books` / `bookmarks` / `highlights` / `notes`（预留）/ `reading_sessions`（时长统计）+ `books_fts`（FTS5 书名索引）。
+
+## 开发与测试
+
+```
+python -m pytest tests/ -v      # 19 项核心逻辑测试
+python app.py --smoke           # UI 冒烟（9 秒后自动退出）
+```
+
+## 打包发布
+
+```
+build.bat        # 或：python -m PyInstaller PyShelf.spec --noconfirm
+```
+
+产物为 `dist/PyShelf.exe` 单文件（约 40MB，免安装，双击即用；阅读数据存于 exe 同目录 `data/`）。
+推送/PR 会触发 GitHub Actions（`.github/workflows/ci.yml`）：自动跑测试并打包 Windows 产物为构建附件。

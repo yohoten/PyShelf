@@ -8,23 +8,49 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-# ---------------- 配色（深色书房 + 黄铜 + 琥珀） ----------------
-BG = "#241E18"
-BG_DEEP = "#1A1512"
-PANEL = "#2E2620"
-BAR = "#3E3125"
-BAR_HOVER = "#4B3C2C"
-BTN = "#5C4327"
-BTN_HOVER = "#7A5A38"
-PLANK_TOP = "#9A7548"
-PLANK_BODY = "#6B4E2E"
-PLANK_EDGE = "#3F2D19"
-BRASS = "#E8D9B0"
-BRASS_DIM = "#C8B896"
-MUTED = "#8A8478"
-GOLD = "#EF9F27"
-RED = "#A32D2D"
-PAPER = "#F2E9D8"
+# ---------------- 配色（双主题：烛光书房·深 / 午后书房·浅） ----------------
+_DARK = {
+    "BG": "#241E18", "BG_DEEP": "#1A1512", "PANEL": "#2E2620",
+    "BAR": "#3E3125", "BAR_HOVER": "#4B3C2C",
+    "BTN": "#5C4327", "BTN_HOVER": "#7A5A38",
+    "PLANK_TOP": "#9A7548", "PLANK_BODY": "#6B4E2E", "PLANK_EDGE": "#3F2D19",
+    "BRASS": "#E8D9B0", "BRASS_DIM": "#C8B896", "MUTED": "#8A8478",
+    "GOLD": "#EF9F27", "RED": "#A32D2D", "PAPER": "#F2E9D8",
+    # 木纹背景渐变端点与暗角
+    "WOOD_TOP": (44, 36, 27), "WOOD_BOTTOM": (24, 20, 15),
+    "WOOD_RING_DARK": (30, 24, 17), "WOOD_RING_LIGHT": (58, 47, 34),
+    "WOOD_VIGNETTE": (12, 10, 8),
+}
+
+_LIGHT = {
+    "BG": "#EFE6D4", "BG_DEEP": "#E5DAC4", "PANEL": "#F6EFDF",
+    "BAR": "#DCCFB4", "BAR_HOVER": "#CEBE9F",
+    "BTN": "#B69C75", "BTN_HOVER": "#C8AD82",
+    "PLANK_TOP": "#C09359", "PLANK_BODY": "#8F6E42", "PLANK_EDGE": "#5C4426",
+    "BRASS": "#4A3820", "BRASS_DIM": "#6B5A3E", "MUTED": "#8A7A60",
+    "GOLD": "#B8760F", "RED": "#A32D2D", "PAPER": "#FBF6EA",
+    "WOOD_TOP": (222, 202, 168), "WOOD_BOTTOM": (192, 170, 136),
+    "WOOD_RING_DARK": (168, 146, 112), "WOOD_RING_LIGHT": (232, 214, 182),
+    "WOOD_VIGNETTE": (150, 132, 104),
+}
+
+THEMES = {"dark": _DARK, "light": _LIGHT}
+_current_theme = "dark"
+
+
+def use_theme(name: str):
+    """切换主题（需在创建任何控件之前调用；运行期切换需重启生效）。"""
+    global _current_theme
+    palette = THEMES.get(name, _DARK)
+    _current_theme = "dark" if palette is _DARK else name
+    globals().update({k: v for k, v in palette.items() if not k.startswith("_")})
+
+
+def current_theme() -> str:
+    return _current_theme
+
+
+use_theme("dark")
 
 SPINE_COLORS = ["#993556", "#0F6E56", "#185FA5", "#A32D2D", "#534AB7",
                 "#3B6D11", "#854F0B", "#3C3489", "#D85A30", "#1D9E75"]
@@ -69,11 +95,11 @@ def _noise(w: int, h: int, cell: int, seed: int) -> Image.Image:
 
 
 def wood_background(w: int, h: int, seed: int = 11) -> Image.Image:
-    """深色木纹背景：纵向明暗渐变 + 年轮曲线 + 细颗粒 + 暗角。"""
+    """木纹背景：纵向明暗渐变 + 年轮曲线 + 细颗粒 + 暗角（颜色随主题）。"""
     w, h = max(w, 2), max(h, 2)
     img = Image.new("RGB", (w, h))
     d = ImageDraw.Draw(img)
-    top, bottom = (44, 36, 27), (24, 20, 15)
+    top, bottom = WOOD_TOP, WOOD_BOTTOM
     for y in range(h):
         t = y / max(h - 1, 1)
         d.line([(0, y), (w, y)],
@@ -85,7 +111,7 @@ def wood_background(w: int, h: int, seed: int = 11) -> Image.Image:
         amp = rnd.uniform(1.5, 4.5)
         phase = rnd.uniform(0, math.tau)
         dark = rnd.random() < 0.5
-        col = (30, 24, 17) if dark else (58, 47, 34)
+        col = WOOD_RING_DARK if dark else WOOD_RING_LIGHT
         pts = [(x, base_y + amp * math.sin(phase + x / rnd.uniform(160, 420)))
                for x in range(0, w + 12, 12)]
         d.line(pts, fill=col, width=1)
@@ -97,7 +123,7 @@ def wood_background(w: int, h: int, seed: int = 11) -> Image.Image:
     vig = Image.new("L", (w, h), 0)
     ImageDraw.Draw(vig).ellipse([-w * 0.25, -h * 0.35, w * 1.25, h * 1.35], fill=255)
     vig = vig.filter(ImageFilter.GaussianBlur(w * 0.08))
-    dark = Image.new("RGB", (w, h), (12, 10, 8))
+    dark = Image.new("RGB", (w, h), WOOD_VIGNETTE)
     return Image.composite(img, dark, vig)
 
 

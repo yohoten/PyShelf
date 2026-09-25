@@ -97,8 +97,11 @@ class PyShelfApp(tk.Tk):
         self.configure(bg=T.BG)
 
         self.scale = T.dpi_scale(self)
-        self.library = Library(DATA_DIR)
         self.settings = self._load_settings()
+        # 主题需在创建任何控件之前生效
+        T.use_theme(self.settings.get("theme", "dark"))
+        self.configure(bg=T.BG)
+        self.library = Library(DATA_DIR)
         self.q: queue.Queue = queue.Queue()
         self.downloader = Downloader(self.q)
         self.filter_mode = "全部"
@@ -125,7 +128,7 @@ class PyShelfApp(tk.Tk):
                 return json.loads(p.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 pass
-        return {"github_token": "", "custom_sources": []}
+        return {"github_token": "", "custom_sources": [], "theme": "dark"}
 
     def save_settings(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -178,7 +181,10 @@ class PyShelfApp(tk.Tk):
                                            self.close_sources, primary=True)
         self.src_toggle_btn.pack_forget()   # 仅书源界面显示
         self._mk_btn(bar, "选择书库目录", self._pick_dir, dim=True).pack(
-            side="right", padx=10)
+            side="right", padx=(10, 3))
+        self.theme_btn = self._mk_btn(bar, self._theme_label(), self._toggle_theme,
+                                      dim=True)
+        self.theme_btn.pack(side="right", padx=3)
 
         self.status_lbl = tk.Label(bar, text="", bg=T.BAR, fg=T.MUTED,
                                    font=T.tk_font(9, scale=self.scale))
@@ -202,6 +208,19 @@ class PyShelfApp(tk.Tk):
 
         self.reader = ReaderView(self.holder, app=self)
         self.source_view = SourceView(self.holder, app=self)
+
+    # ---------------- 主题 ----------------
+    def _theme_label(self) -> str:
+        return "☾ 午后书房" if T.current_theme() == "dark" else "☀ 烛光书房"
+
+    def _toggle_theme(self):
+        new = "light" if T.current_theme() == "dark" else "dark"
+        self.settings["theme"] = new
+        self.save_settings()
+        messagebox.showinfo(
+            "主题已切换",
+            f"已选择「{'午后书房' if new == 'light' else '烛光书房'}」主题。\n"
+            "重启应用后生效（阅读进度与设置不受影响）。", parent=self)
 
     # ---------------- 书库 ----------------
     def _first_run(self):
@@ -271,8 +290,7 @@ class PyShelfApp(tk.Tk):
         elif kind == "done":
             self.library.save()
             self.refresh_shelf()
-            self.status_lbl.configure(
-                text=f"书库 {len(self.library.books)} 本 · 就绪")
+            self.status_lbl.configure(text=self._status_text())
         elif kind == "src_results":
             self.source_view.show_results(msg[1], msg[2])
         elif kind == "src_error":
@@ -308,6 +326,19 @@ class PyShelfApp(tk.Tk):
             self._covers_dirty = False
             self.shelf.redraw()
         self.after(400, self._poll)
+
+    # ---------------- 阅读统计 ----------------
+    def _status_text(self) -> str:
+        n = len(self.library.books)
+        today = self.library.minutes_today()
+        total = self.library.hours_total()
+        if today >= 60:
+            today_s = f"{today / 60:.1f} 小时"
+        elif today >= 1:
+            today_s = f"{today:.0f} 分钟"
+        else:
+            today_s = "不足 1 分钟"
+        return f"书库 {n} 本 · 今日阅读 {today_s} · 累计 {total:.1f} 小时"
 
     # ---------------- 书架 ----------------
     def _visible_books(self) -> list[Book]:
@@ -399,17 +430,20 @@ class PyShelfApp(tk.Tk):
         self.reader.pack(fill="both", expand=True)
         self.library.touch_history(book, book.progress or 1)
         self.library.save()
+        self.library.begin_session(book)   # 阅读时长统计
 
     def on_reader_page_change(self, book: Book, page: int):
         if book:
             self.library.touch_history(book, page)
 
     def close_reader(self):
+        self.library.end_session(self.reader.page + 1)
         self.library.save()
         self.reader.close()
         self.reader.pack_forget()
         self.shelf_holder.pack(fill="both", expand=True)
         self.refresh_shelf()
+        self.status_lbl.configure(text=self._status_text())
 
     # ---------------- 书源 ----------------
     def open_sources(self):
@@ -443,6 +477,7 @@ class PyShelfApp(tk.Tk):
     def _on_close(self):
         if self.reader.engine and self.reader.book:
             self.library.touch_history(self.reader.book, self.reader.page + 1)
+        self.library.end_session(self.reader.page + 1)
         self.library.save()
         self.save_settings()
         self.reader.close()

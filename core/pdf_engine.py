@@ -32,6 +32,11 @@ class PDFEngine:
         except Exception:
             return []
 
+    def page_size(self, page_index: int) -> tuple[float, float]:
+        """页面尺寸（宽, 高），单位为 PDF 点；供适配缩放计算。"""
+        r = self.doc[page_index].rect
+        return r.width, r.height
+
     def render(self, page_index: int, zoom: float, highlights=(),
                candle: bool = False) -> Image.Image:
         """渲染一页为 PIL Image。highlights 为该页的 (x0,y0,x1,y1) PDF 坐标矩形。"""

@@ -6,8 +6,8 @@ from tkinter import messagebox, simpledialog
 
 from PIL import Image, ImageTk
 
+from core.engines import DocumentEngine, open_engine
 from core.library import Book
-from core.pdf_engine import PDFEngine
 from ui import theme as T
 from ui.sidebar import Sidebar
 
@@ -20,7 +20,7 @@ class ReaderView(tk.Frame):
         super().__init__(master, bg=T.BG_DEEP, **kw)
         self.app = app
         self.s = getattr(app, "scale", 1.0)
-        self.engine: PDFEngine | None = None
+        self.engine: DocumentEngine | None = None
         self.book: Book | None = None
         self.page = 0
         self.zoom = 1.0
@@ -44,10 +44,16 @@ class ReaderView(tk.Frame):
         self.canvas.bind("<B1-Motion>", self._on_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
         self.canvas.bind("<MouseWheel>", self._on_wheel)
+        self.canvas.bind("<Control-MouseWheel>", self._on_ctrl_wheel)
         for seq in ("<Left>", "<Prior>", "<Key-w>"):
             self.bind(seq, lambda e: self.prev_page())
         for seq in ("<Right>", "<Next>", "<Key-s>"):
             self.bind(seq, lambda e: self.next_page())
+        for seq in ("<Key-plus>", "<Key-equal>", "<KP_Add>"):
+            self.bind(seq, lambda e: self._zoom_by(1.2))
+        for seq in ("<Key-minus>", "<KP_Subtract>"):
+            self.bind(seq, lambda e: self._zoom_by(1 / 1.2))
+        self.bind("<Key-f>", lambda e: self._toggle_favorite())
         self.bind("<Home>", lambda e: self.goto(0))
         self.bind("<End>", lambda e: self.goto(self.page_count - 1))
         self.bind("<Escape>", lambda e: self._go_back())
@@ -93,7 +99,7 @@ class ReaderView(tk.Frame):
 
     def open_book(self, book: Book) -> bool:
         try:
-            eng = PDFEngine(book.path)
+            eng = open_engine(book.path)
         except Exception as e:
             messagebox.showerror("无法打开", f"{book.title}\n\n{e}", parent=self)
             return False
@@ -129,11 +135,11 @@ class ReaderView(tk.Frame):
     def _fit_zoom(self):
         if not self.engine:
             return
-        page = self.engine.doc[self.page]
+        pw, ph = self.engine.page_size(self.page)
         avail_w = max(self.canvas.winfo_width() - int(56 * self.s), 200)
         avail_h = max(self.canvas.winfo_height() - int(56 * self.s), 200)
-        self.zoom = max(min(avail_w / max(page.rect.width, 1),
-                            avail_h / max(page.rect.height, 1), ZOOM_MAX), ZOOM_MIN)
+        self.zoom = max(min(avail_w / max(pw, 1),
+                            avail_h / max(ph, 1), ZOOM_MAX), ZOOM_MIN)
 
     def _fit_and_render(self):
         if not self.engine:
@@ -162,11 +168,10 @@ class ReaderView(tk.Frame):
         key = (self.page, round(self.zoom, 3), self.candle)
         photo = self._cache.get(key)
         if photo is None:
-            page = self.engine.doc[self.page]
+            pw, ph = self.engine.page_size(self.page)
             # 超采样：以 2 倍分辨率渲染再高质量缩小，文字/线条更锐利
             ss = 2.0
-            if (page.rect.width * self.zoom * ss
-                    * page.rect.height * self.zoom * ss) > MAX_PIXELS:
+            if (pw * self.zoom * ss * ph * self.zoom * ss) > MAX_PIXELS:
                 ss = 1.0
             rects = [h.rect for h in self.book.highlights
                      if h.page - 1 == self.page] if self.book else []
@@ -240,6 +245,14 @@ class ReaderView(tk.Frame):
             self.next_page()
         else:
             self.prev_page()
+
+    def _on_ctrl_wheel(self, e):
+        self._zoom_by(1.2 if e.delta > 0 else 1 / 1.2)
+
+    def _toggle_favorite(self):
+        if self.book:
+            self.app.library.toggle_favorite(self.book)
+            self.app.save_library()
 
     # ---------------- 书签 / 高亮 ----------------
     def add_bookmark(self):
