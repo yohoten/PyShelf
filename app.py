@@ -104,9 +104,17 @@ class PyShelfApp(tk.Tk):
         self.library = Library(DATA_DIR)
         self.q: queue.Queue = queue.Queue()
         self.downloader = Downloader(self.q)
-        self.filter_mode = "全部"
+        self.filter_mode = self.settings.get("filter_mode", "全部") \
+            if self.settings.get("filter_mode", "全部") in FILTERS else "全部"
         self.search_text = ""
         self._covers_dirty = False
+        # 记忆上次窗口大小/位置
+        geo = self.settings.get("geometry", "")
+        if geo:
+            try:
+                self.geometry(geo)
+            except tk.TclError:
+                pass
 
         self._build_topbar()
         self._build_body()
@@ -171,7 +179,7 @@ class PyShelfApp(tk.Tk):
         self.filter_btns = {}
         for name in FILTERS:
             b = self._mk_btn(bar, name, lambda n=name: self._set_filter(n),
-                             primary=(name == "全部"))
+                             primary=(name == self.filter_mode))
             b.pack(side="left", padx=3)
             self.filter_btns[name] = b
 
@@ -241,22 +249,35 @@ class PyShelfApp(tk.Tk):
 
     def start_scan(self, lib_dir: str):
         self.library.library_dir = lib_dir
+        self.library.store.set_library_dir(lib_dir)
         self.library.save()
         self.status_lbl.configure(text="扫描中…")
-        threading.Thread(target=self._scan_worker, args=(lib_dir,),
+        # 快照在主线程构建（避免与 UI 读写竞态）：path -> (指纹, 页数)
+        snapshot = {b.path: (b.fingerprint, b.pages) for b in self.library.books.values()
+                    if b.readable and b.pages > 0 and b.fingerprint}
+        threading.Thread(target=self._scan_worker, args=(lib_dir, snapshot),
                          daemon=True).start()
 
-    def _scan_worker(self, lib_dir: str):
+    def _scan_worker(self, lib_dir: str, snapshot: dict):
         """后台线程只做慢 IO（磁盘扫描 + PDF 探测 + 封面渲染）；
-        书库字典的增删一律回到主线程执行，避免与 UI 读取发生竞态。"""
+        书库字典的增删一律回到主线程执行，避免与 UI 读取发生竞态。
+        指纹（mtime_ns:size）未变的文件跳过 PDF 探测——增量扫描。"""
         files = scanner.scan_files(lib_dir)
         infos = []
         for p in files:
-            pages, readable = 0, True
-            if p.suffix.lower() == ".pdf":
+            pages, readable, fp = 0, True, ""
+            try:
+                st = p.stat()
+                fp = f"{st.st_mtime_ns}:{st.st_size}"
+            except OSError:
+                pass
+            cached = snapshot.get(str(p))
+            if cached and cached[0] == fp:
+                pages = cached[1]          # 文件未变：直接复用页数，不探测
+            elif p.suffix.lower() == ".pdf":
                 pages, readable = scanner.probe_pdf(p)
             infos.append((str(p), scanner.clean_title(p.name),
-                          p.suffix.lower(), pages, readable))
+                          p.suffix.lower(), pages, readable, fp))
         self.q.put(("scanned", infos))
 
         todo = [b for b in list(self.library.books.values())
@@ -276,8 +297,9 @@ class PyShelfApp(tk.Tk):
         if kind == "scanned":
             infos = msg[1]
             existing = set()
-            for path_s, title, ext, pages, readable in infos:
-                self.library.upsert(Path(path_s), title, ext, pages, readable)
+            for path_s, title, ext, pages, readable, fp in infos:
+                book = self.library.upsert(Path(path_s), title, ext, pages, readable)
+                book.fingerprint = fp
                 existing.add(path_s)
             for bid in [b.id for b in self.library.books.values()
                         if b.path not in existing]:
@@ -479,6 +501,12 @@ class PyShelfApp(tk.Tk):
             self.library.touch_history(self.reader.book, self.reader.page + 1)
         self.library.end_session(self.reader.page + 1)
         self.library.save()
+        # 记忆窗口几何与筛选模式
+        try:
+            self.settings["geometry"] = self.geometry()
+        except tk.TclError:
+            pass
+        self.settings["filter_mode"] = self.filter_mode
         self.save_settings()
         self.reader.close()
         self.destroy()

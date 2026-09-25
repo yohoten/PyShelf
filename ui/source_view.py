@@ -51,7 +51,7 @@ class SourceView(tk.Frame):
             side="left", padx=(6, 10), pady=8)
         self.query = tk.Entry(head, bg=T.BG, fg=T.BRASS, relief="flat",
                               insertbackground=T.BRASS,
-                              font=T.tk_font(10, scale=self.s), width=34)
+                              font=T.tk_font(10, scale=self.s), width=26)
         self.query.pack(side="left", ipady=int(4 * self.s), padx=4, pady=8)
         self.query.bind("<Return>", lambda e: self.search())
         self._btn(head, "搜索", self.search, primary=True).pack(side="left", padx=6)

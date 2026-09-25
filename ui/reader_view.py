@@ -78,6 +78,9 @@ class ReaderView(tk.Frame):
                                   font=T.tk_font(12, serif=True, scale=self.s),
                                   anchor="w")
         self.title_lbl.pack(side="left", fill="x", expand=True, padx=8)
+        # 窗口缩放时按可用宽度重新截断标题（避免长书名顶到右侧按钮）
+        self.title_lbl.bind("<Configure>", lambda e: self._apply_title())
+        self._full_title = ""
         self._btn(bar, "◀", self.prev_page).pack(side="right", padx=2)
         self.page_lbl = tk.Label(bar, text="0 / 0", bg=T.BAR, fg=T.MUTED,
                                  font=T.tk_font(10, scale=self.s),
@@ -116,7 +119,7 @@ class ReaderView(tk.Frame):
         self.page = min(max(book.progress - 1, 0), max(eng.page_count - 1, 0))
         self.candle = False
         self.candle_btn.configure(bg=T.BTN, fg=T.BRASS)
-        self.title_lbl.configure(text=book.title)
+        self._set_title(book.title)
         self.sidebar.refresh(book, eng.get_toc(), self.page)
         self.after(120, self._fit_and_render)
         self.focus_set()
@@ -130,6 +133,25 @@ class ReaderView(tk.Frame):
 
     def _go_back(self):
         self.app.close_reader()
+
+    # ---------------- 标题（超宽截断） ----------------
+    def _set_title(self, text: str):
+        self._full_title = text or ""
+        self._apply_title()
+
+    def _apply_title(self):
+        t = self._full_title
+        if not t:
+            return
+        import tkinter.font as tkfont_mod
+        f = tkfont_mod.Font(font=T.tk_font(12, serif=True, scale=self.s))
+        max_w = max(self.title_lbl.winfo_width() - 16, 80)
+        if f.measure(t) <= max_w:
+            self.title_lbl.configure(text=t)
+        else:
+            while t and f.measure(t + "…") > max_w:
+                t = t[:-1]
+            self.title_lbl.configure(text=t + "…")
 
     # ---------------- 渲染 ----------------
     def _fit_zoom(self):

@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS books (
     progress     INTEGER NOT NULL DEFAULT 0,
     last_opened  REAL    NOT NULL DEFAULT 0,
     cover_ok     INTEGER NOT NULL DEFAULT 0,
-    readable     INTEGER NOT NULL DEFAULT 1
+    readable     INTEGER NOT NULL DEFAULT 1,
+    fingerprint  TEXT    NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS bookmarks (
     book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
@@ -72,6 +73,7 @@ def _row_to_book(row: sqlite3.Row, children: dict) -> Book:
         pages=row["pages"], favorite=bool(row["favorite"]),
         progress=row["progress"], last_opened=row["last_opened"],
         cover_ok=bool(row["cover_ok"]), readable=bool(row["readable"]),
+        fingerprint=row["fingerprint"],
         bookmarks=children.get("bm", []),
         highlights=children.get("hl", []),
     )
@@ -88,6 +90,12 @@ class Storage:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(_SCHEMA)
+        # 旧库升级：补充 fingerprint 列（无该列的既有 data/library.db）
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(books)")}
+        if "fingerprint" not in cols:
+            self.conn.execute(
+                "ALTER TABLE books ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''")
+            self.conn.commit()
         self._set_meta("schema_version", str(SCHEMA_VERSION))
 
     # ---------------- meta ----------------
@@ -127,16 +135,17 @@ class Storage:
         with c:
             c.execute(
                 """INSERT INTO books(id, path, title, ext, pages, favorite,
-                       progress, last_opened, cover_ok, readable)
-                   VALUES(?,?,?,?,?,?,?,?,?,?)
+                       progress, last_opened, cover_ok, readable, fingerprint)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET
                        path=excluded.path, title=excluded.title, ext=excluded.ext,
                        pages=excluded.pages, favorite=excluded.favorite,
                        progress=excluded.progress, last_opened=excluded.last_opened,
-                       cover_ok=excluded.cover_ok, readable=excluded.readable""",
+                       cover_ok=excluded.cover_ok, readable=excluded.readable,
+                       fingerprint=excluded.fingerprint""",
                 (book.id, book.path, book.title, book.ext, book.pages,
                  int(book.favorite), book.progress, book.last_opened,
-                 int(book.cover_ok), int(book.readable)))
+                 int(book.cover_ok), int(book.readable), book.fingerprint))
             c.execute("DELETE FROM bookmarks WHERE book_id=?", (book.id,))
             c.executemany(
                 "INSERT INTO bookmarks(book_id, page, note) VALUES(?,?,?)",

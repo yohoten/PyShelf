@@ -104,3 +104,34 @@ def test_fts_search(tmp_path):
     assert st.search_titles("") == []
     # 特殊字符不炸
     st.search_titles('"奇奇怪怪的引号')
+
+
+def test_fingerprint_roundtrip(tmp_path):
+    """扫描增量化依赖的指纹字段可持久化。"""
+    st = Storage(tmp_path / "t.db")
+    b = _mk_book(tmp_path)
+    b.fingerprint = "123456789:987654"
+    st.save_book(b)
+    got = st.load_all()[b.id]
+    assert got.fingerprint == "123456789:987654"
+
+
+def test_old_db_upgrade_adds_fingerprint(tmp_path):
+    """旧版 library.db（无 fingerprint 列）打开时自动 ALTER 升级。"""
+    import sqlite3
+    db = tmp_path / "old.db"
+    c = sqlite3.connect(str(db))
+    c.executescript("""
+        CREATE TABLE books (
+            id TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL, title TEXT NOT NULL,
+            ext TEXT NOT NULL DEFAULT '.pdf', pages INTEGER NOT NULL DEFAULT 0,
+            favorite INTEGER NOT NULL DEFAULT 0, progress INTEGER NOT NULL DEFAULT 0,
+            last_opened REAL NOT NULL DEFAULT 0, cover_ok INTEGER NOT NULL DEFAULT 0,
+            readable INTEGER NOT NULL DEFAULT 1);
+    """)
+    c.execute("INSERT INTO books(id, path, title) VALUES('x', 'p', '旧记录')")
+    c.commit()
+    c.close()
+    st = Storage(db)   # 应自动补列而不报错
+    books = st.load_all()
+    assert "x" in books and books["x"].fingerprint == ""

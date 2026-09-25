@@ -37,3 +37,4 @@ class Book:
     highlights: list = field(default_factory=list)  # list[Highlight]
     cover_ok: bool = False     # 封面缓存是否已生成
     readable: bool = True      # 引擎是否能打开
+    fingerprint: str = ""      # "mtime_ns:size"，扫描增量化用（未变更则跳过探测）

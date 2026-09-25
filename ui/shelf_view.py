@@ -30,7 +30,9 @@ class ShelfView(tk.Canvas):
         self._covers: dict[tuple[str, bool], ImageTk.PhotoImage] = {}
         self._bg: tuple[tuple[int, int], ImageTk.PhotoImage] | None = None
         self._planks: dict[int, ImageTk.PhotoImage] = {}
-        self._cells: list[tuple[int, int, int, int, Book]] = []
+        self._cells: list[tuple[int, int, int, int, Book, int]] = []
+        self._plank_rects: dict[int, tuple[int, int, int, int]] = {}  # key -> (x, y, w, h)
+        self._plank_seq = 0
         self._hover_bid: str | None = None
         self._tip: tk.Toplevel | None = None
         self._render_job = None
@@ -58,6 +60,8 @@ class ShelfView(tk.Canvas):
         self._hide_tip()
         self.delete("all")
         self._cells = []
+        self._plank_rects = {}
+        self._plank_seq = 0
         width = max(self.winfo_width(), 400)
         self._draw_background(width, max(self.winfo_height(), 600))
 
@@ -112,25 +116,38 @@ class ShelfView(tk.Canvas):
         row_h = self.cover_h + int(46 * self.s)   # 封面 + 书名行
         for r in range(n_rows):
             chunk = books[r * per_row: (r + 1) * per_row]
+            plank_key = None
             for i, book in enumerate(chunk):
-                self._draw_book(pad + i * self.cell_w, y, book)
+                _, plank_key = self._draw_book(pad + i * self.cell_w, y, book)
             y += row_h
-            y = self._draw_plank(width, y)
+            y = self._draw_plank(width, y, plank_key)
             y += int(16 * self.s)
         return y + int(20 * self.s)
 
-    def _draw_plank(self, width, y):
+    def _draw_plank(self, width, y, key=None):
+        """画木质层板。key 给定时复用编号（局部重绘用），否则新建。"""
         pad = int(16 * self.s)
         pw = width - 2 * pad
         ph = int(11 * self.s)
-        key = pw
-        if key not in self._planks:
-            self._planks[key] = ImageTk.PhotoImage(T.plank_texture(pw, ph))
-        self.create_image(pad, y - int(5 * self.s), image=self._planks[key],
-                          anchor="nw")
+        if key is None:
+            self._plank_seq += 1
+            key = self._plank_seq
+        self._plank_rects[key] = (pad, y - int(5 * self.s), pw, ph)
+        self._create_plank(key)
         return y + ph + int(6 * self.s)
 
-    def _draw_book(self, x, y, book: Book):
+    def _create_plank(self, key):
+        x, y, pw, ph = self._plank_rects[key]
+        if pw not in self._planks:
+            self._planks[pw] = ImageTk.PhotoImage(T.plank_texture(pw, ph))
+        self.create_image(x, y, image=self._planks[pw], anchor="nw",
+                          tags=(f"plank:{key}", "plank"))
+        return key
+
+    def _draw_book(self, x, y, book: Book, plank_key=None):
+        """画一本书的可见元素（封面/角标/书名），全部打 b:{id} 标签；
+        返回所在行的层板 key（局部重绘时需一并重画层板以保持遮挡关系）。"""
+        tag = f"b:{book.id}"
         cover_w, cover_h = self.cover_w, self.cover_h
         cx = x + (self.cell_w - cover_w) // 2
         hovered = book.id == self._hover_bid
@@ -142,41 +159,60 @@ class ShelfView(tk.Canvas):
             cx -= grow
             y -= grow
         photo = self._cover_image(book, cover_w, cover_h, hovered)
-        self.create_image(cx, y, image=photo, anchor="nw")
+        self.create_image(cx, y, image=photo, anchor="nw", tags=(tag,))
 
         # 状态角标
         if book.progress > 0 and book.pages:
             pct = min(round(book.progress * 100 / book.pages), 99)
             bw, bh = int(48 * self.s), int(18 * self.s)
             self.create_rectangle(cx, y, cx + bw, y + bh, fill=T.GOLD,
-                                  outline="#412402")
+                                  outline="#412402", tags=(tag,))
             self.create_text(cx + bw / 2, y + bh / 2, text=f"在读{pct}%",
-                             fill="#412402", font=T.tk_font(8, scale=self.s))
+                             fill="#412402", font=T.tk_font(8, scale=self.s),
+                             tags=(tag,))
         elif not book.readable:
             bw, bh = int(62 * self.s), int(18 * self.s)
             self.create_rectangle(cx, y, cx + bw, y + bh, fill="#4B4B4B",
-                                  outline="#222")
+                                  outline="#222", tags=(tag,))
             self.create_text(cx + bw / 2, y + bh / 2, text="文件异常",
-                             fill="#E0E0E0", font=T.tk_font(8, scale=self.s))
+                             fill="#E0E0E0", font=T.tk_font(8, scale=self.s),
+                             tags=(tag,))
         if book.favorite:
             r = int(7 * self.s)
             self.create_oval(cx + cover_w - 2 * r - 4, y + 4,
                              cx + cover_w - 4, y + 2 * r + 4, fill=T.GOLD,
-                             outline="#412402")
+                             outline="#412402", tags=(tag,))
 
         # 书名（两行内，超出省略）
         label = self._wrap_title(book.title, 2)
         self.create_text(cx + cover_w / 2, y + cover_h + int(16 * self.s),
                          text=label, fill=T.BRASS if hovered else T.BRASS_DIM,
                          font=T.tk_font(9, scale=self.s),
-                         width=cover_w + int(10 * self.s), justify="center")
-        if hovered:
-            self.tag_raise(f"b:{book.id}")
+                         width=cover_w + int(10 * self.s), justify="center",
+                         tags=(tag,))
 
         # 命中区域（含标题行）
-        self._cells.append((x, y, self.cell_w, self.cell_h, book))
         self.create_rectangle(x, y, x + self.cell_w, y + self.cell_h,
-                              fill="", outline="", tags=("cell", f"b:{book.id}"))
+                              fill="", outline="", tags=("cell", tag))
+        self._cells.append((x, y, self.cell_w, self.cell_h, book, plank_key))
+        return tag, plank_key
+
+    def _repaint_book(self, bid):
+        """局部重绘一本书：删除其全部绘制项后原位重画，
+        并重画其层板（层板须盖住封面下缘，保持"立于层板"的遮挡关系）。
+        替代 hover 变化时的全量 redraw——书库规模大时避免整架重绘。"""
+        if not bid:
+            return
+        for x, y, cw, ch, book, plank_key in self._cells:
+            if book.id == bid:
+                self.delete(f"b:{bid}")
+                # 临时移除该 cell 再重画（_draw_book 会重新注册）
+                self._cells.remove((x, y, cw, ch, book, plank_key))
+                self._draw_book(x, y, book, plank_key)
+                if plank_key is not None:
+                    self.delete(f"plank:{plank_key}")
+                    self._create_plank(plank_key)
+                return
 
     def _cover_image(self, book: Book, w: int, h: int, hover: bool) -> ImageTk.PhotoImage:
         key = (f"{book.id}@{w}x{h}", hover)
@@ -205,7 +241,7 @@ class ShelfView(tk.Canvas):
 
     # ---------------- 交互 ----------------
     def _book_at(self, x, y) -> Book | None:
-        for cx, cy, cw, ch, book in self._cells:
+        for cx, cy, cw, ch, book, _plank in self._cells:
             if cx <= x <= cx + cw and cy <= y <= cy + ch:
                 return book
         return None
@@ -219,8 +255,11 @@ class ShelfView(tk.Canvas):
         book = self._book_at(self.canvasx(e.x), self.canvasy(e.y))
         new_id = book.id if book else None
         if new_id != self._hover_bid:
+            old_id = self._hover_bid
             self._hover_bid = new_id
-            self.redraw()
+            # 局部重绘：仅旧、新两本书及其层板，不再全量 redraw
+            self._repaint_book(old_id)
+            self._repaint_book(new_id)
         if book:
             self._show_tip(book, e.x_root, e.y_root)
         else:
@@ -228,9 +267,19 @@ class ShelfView(tk.Canvas):
         self.configure(cursor="hand2" if book else "")
 
     def _on_leave(self, _e):
+        # 悬浮提示（Toplevel）弹出/销毁会让 Tk 发出伪 Leave 事件
+        # （真实指针仍在画布内）——校验指针位置，避免 hover 被误清除
+        try:
+            px = self.winfo_pointerx() - self.winfo_rootx()
+            py = self.winfo_pointery() - self.winfo_rooty()
+            if 0 <= px < self.winfo_width() and 0 <= py < self.winfo_height():
+                return   # 指针仍在画布内：伪 Leave，忽略
+        except tk.TclError:
+            pass
         if self._hover_bid:
+            old_id = self._hover_bid
             self._hover_bid = None
-            self.redraw()
+            self._repaint_book(old_id)
         self._hide_tip()
 
     def _show_tip(self, book: Book, rx, ry):
