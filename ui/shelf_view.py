@@ -30,9 +30,10 @@ class ShelfView(tk.Canvas):
         self._covers: dict[tuple[str, bool], ImageTk.PhotoImage] = {}
         self._bg: tuple[tuple[int, int], ImageTk.PhotoImage] | None = None
         self._planks: dict[int, ImageTk.PhotoImage] = {}
-        self._cells: list[tuple[int, int, int, int, Book, int]] = []
+        self._cells: list[tuple[int, int, int, int, Book, int, str]] = []
         self._plank_rects: dict[int, tuple[int, int, int, int]] = {}  # key -> (x, y, w, h)
         self._plank_seq = 0
+        self._tag_seq = 0
         self._hover_bid: str | None = None
         self._tip: tk.Toplevel | None = None
         self._render_job = None
@@ -62,6 +63,7 @@ class ShelfView(tk.Canvas):
         self._cells = []
         self._plank_rects = {}
         self._plank_seq = 0
+        self._tag_seq = 0
         width = max(self.winfo_width(), 400)
         self._draw_background(width, max(self.winfo_height(), 600))
 
@@ -116,9 +118,11 @@ class ShelfView(tk.Canvas):
         row_h = self.cover_h + int(46 * self.s)   # 封面 + 书名行
         for r in range(n_rows):
             chunk = books[r * per_row: (r + 1) * per_row]
-            plank_key = None
+            # 预分配本行层板 key，书本 cell 记录之（局部重绘后恢复遮挡用）
+            self._plank_seq += 1
+            plank_key = self._plank_seq
             for i, book in enumerate(chunk):
-                _, plank_key = self._draw_book(pad + i * self.cell_w, y, book)
+                self._draw_book(pad + i * self.cell_w, y, book, plank_key)
             y += row_h
             y = self._draw_plank(width, y, plank_key)
             y += int(16 * self.s)
@@ -145,11 +149,15 @@ class ShelfView(tk.Canvas):
         return key
 
     def _draw_book(self, x, y, book: Book, plank_key=None):
-        """画一本书的可见元素（封面/角标/书名），全部打 b:{id} 标签；
-        返回所在行的层板 key（局部重绘时需一并重画层板以保持遮挡关系）。"""
-        tag = f"b:{book.id}"
+        """画一本书的可见元素（封面/角标/书名），全部打唯一实例标签。
+        注意：同一本书可能同时出现在「最近阅读」与「全部书籍」两个分区，
+        必须各自持有独立标签，局部重绘按标签删除才不会误伤另一份。
+        返回 (实例标签, 层板 key)。"""
+        self._tag_seq += 1
+        tag = f"bk{self._tag_seq}"
         cover_w, cover_h = self.cover_w, self.cover_h
         cx = x + (self.cell_w - cover_w) // 2
+        base_y = y          # 命中区域/注册坐标（不受 hover 位移影响，防漂移）
         hovered = book.id == self._hover_bid
         if hovered:
             # 悬停：整体上提放大，营造"抽出一本书"的手感
@@ -191,28 +199,27 @@ class ShelfView(tk.Canvas):
                          width=cover_w + int(10 * self.s), justify="center",
                          tags=(tag,))
 
-        # 命中区域（含标题行）
-        self.create_rectangle(x, y, x + self.cell_w, y + self.cell_h,
+        # 命中区域（含标题行）——固定在基准坐标，悬停位移只作用于可见元素
+        self.create_rectangle(x, base_y, x + self.cell_w, base_y + self.cell_h,
                               fill="", outline="", tags=("cell", tag))
-        self._cells.append((x, y, self.cell_w, self.cell_h, book, plank_key))
+        self._cells.append((x, base_y, self.cell_w, self.cell_h, book,
+                            plank_key, tag))
         return tag, plank_key
 
     def _repaint_book(self, bid):
-        """局部重绘一本书：删除其全部绘制项后原位重画，
-        并重画其层板（层板须盖住封面下缘，保持"立于层板"的遮挡关系）。
+        """局部重绘一本书：按实例标签原位重画其全部分区副本，
+        最后把所有层板依序提回最上层，恢复「书立于层板」的遮挡关系。
+        （Canvas 新建项总在最顶层，不恢复层板会让重绘的书盖住层板。）
         替代 hover 变化时的全量 redraw——书库规模大时避免整架重绘。"""
         if not bid:
             return
-        for x, y, cw, ch, book, plank_key in self._cells:
-            if book.id == bid:
-                self.delete(f"b:{bid}")
-                # 临时移除该 cell 再重画（_draw_book 会重新注册）
-                self._cells.remove((x, y, cw, ch, book, plank_key))
-                self._draw_book(x, y, book, plank_key)
-                if plank_key is not None:
-                    self.delete(f"plank:{plank_key}")
-                    self._create_plank(plank_key)
-                return
+        for rec in [r for r in self._cells if r[4].id == bid]:
+            x, y, cw, ch, book, plank_key, tag = rec
+            self.delete(tag)
+            self._cells.remove(rec)
+            self._draw_book(x, y, book, plank_key)
+        for it in self.find_withtag("plank"):
+            self.tag_raise(it)
 
     def _cover_image(self, book: Book, w: int, h: int, hover: bool) -> ImageTk.PhotoImage:
         key = (f"{book.id}@{w}x{h}", hover)
@@ -241,7 +248,7 @@ class ShelfView(tk.Canvas):
 
     # ---------------- 交互 ----------------
     def _book_at(self, x, y) -> Book | None:
-        for cx, cy, cw, ch, book, _plank in self._cells:
+        for cx, cy, cw, ch, book, _plank, _tag in self._cells:
             if cx <= x <= cx + cw and cy <= y <= cy + ch:
                 return book
         return None
