@@ -1,0 +1,5 @@
+PyQt5>=5.15.9
+PyMuPDF>=1.23.0
+Pillow>=9.5.0
+# pyinstaller>=6.0
+# pytest>=7.4.0

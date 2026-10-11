@@ -8,6 +8,8 @@ from pathlib import Path
 import pymupdf
 from PIL import Image, ImageDraw, ImageFont
 
+from core.models import _norm_dir
+
 SUPPORTED = {".pdf", ".epub", ".txt", ".md"}
 SKIP_NAMES = {"desktop.ini", "thumbs.db"}
 
@@ -72,6 +74,39 @@ def probe_pdf(path: Path) -> tuple[int, bool]:
         return n, True
     except Exception:
         return 0, False
+
+
+def collect_infos(dirs, snapshot: dict | None = None) -> list[tuple]:
+    """多目录汇总扫描结果，按「(指纹, 规范路径)」去重。
+
+    返回 [(path_s, title, ext, pages, readable, fp), ...]。
+    snapshot: {规范路径: (fingerprint, pages)}；指纹未变则复用页数（增量探测）。
+    仅合并「同一物理文件」在重叠/嵌套目录中的重复命中；不再按内容把不同文件
+    误并（否则会让未出现在结果中的 present 书被误标失联，F-9）。
+    """
+    snapshot = snapshot or {}
+    infos, seen = [], set()
+    for d in dirs:
+        for p in scan_files(d):
+            try:
+                st = p.stat()
+            except OSError:
+                continue                      # 不可读：跳过，不建失联
+            fp = f"{st.st_mtime_ns}:{st.st_size}"
+            npath = _norm_dir(str(p))
+            key = (fp, npath) if fp else (None, npath)
+            if key in seen:
+                continue                      # 同一文件在多目录：只留首次
+            seen.add(key)
+            pages, readable = 0, True
+            cached = snapshot.get(npath)
+            if cached and cached[0] == fp:
+                pages = cached[1]             # 文件未变：复用页数，不探测
+            elif p.suffix.lower() == ".pdf":
+                pages, readable = probe_pdf(p)
+            infos.append((str(p), clean_title(p.name), p.suffix.lower(),
+                          pages, readable, fp))
+    return infos
 
 
 def cover_path(data_dir: Path, bid: str) -> Path:

@@ -6,7 +6,10 @@
 
 ## 启动
 
-双击 `launcher.bat`（自动探测 Python 解释器，使用系统 Python 3.12：tkinter + PyMuPDF + Pillow，无需安装任何依赖）。
+双击 `launcher.bat`（自动探测 Python 解释器，使用系统 Python 3.12：PyQt5 + PyMuPDF + Pillow）。
+
+- 首次使用需安装依赖：`pip install PyQt5 pymupdf pillow`（或运行 `build.bat` 后直接使用免安装的 `dist/PyShelf.exe`）。
+- GUI 框架为 **PyQt5**（`QMainWindow` + `QStackedWidget` 页面切换，`QWidget` 自绘拟物书架/阅读页）。
 
 - `launcher.bat` —— 正常启动（无控制台窗口）
 - `launcher.bat debug` —— 控制台运行，报错直接可见，可追加参数如 `launcher.bat debug --smoke`
@@ -42,6 +45,21 @@ C:\Users\yohoten\AppData\Local\Programs\Python\Python312\python.exe app.py
 | 阅读历史 | 自动记录进度，封面左上角显示「在读 N%」，重开自动续读；状态栏显示今日/累计阅读时长 |
 | 搜索 | 顶栏输入书名实时过滤 |
 | 书源检索 | 顶栏「书源检索」进入，见下节 |
+| 设置 | 顶栏「⚙ 设置」打开设置中心，见下节 |
+
+## 设置中心
+
+顶栏「⚙ 设置」打开，分页如下（**保存后即时生效**，字体与主题类标注为重启生效）：
+
+| 分页 | 可配置项 |
+|---|---|
+| 外观 | 配色主题（深色烛光/浅色午后，重启生效）、封面尺寸（小/中/大）、显示「最近阅读 / 收藏」分区、悬停信息提示 |
+| 字体 | 界面字体、标题字体、字号缩放 60%–200%（重启生效） |
+| 阅读 | 打开时缩放（适配整页 / 适配页宽 / 原始 100%）、打开即烛光模式、滚轮翻页 |
+| 性能 | 页面渲染质量（1x / 2x 超采样）、后台渲染线程数（1–8） |
+| 书源 | GitHub Token、快捷进入「管理书籍目录」 |
+
+设置持久化在 `data/settings.json`；缺失键自动补齐默认值，旧配置无需手动迁移。
 
 ## 书源检索
 
@@ -73,7 +91,10 @@ C:\Users\yohoten\AppData\Local\Programs\Python\Python312\python.exe app.py
   不再全量重绘整个书架（数百本规模下无卡顿、无闪烁）
 - **增量扫描**：以文件指纹（mtime_ns:size）识别未变更文件，重复扫描时
   跳过 PDF 逐本探测（页数/可读性直接复用缓存），书库越大收益越明显
-- 后台线程承担全部慢 IO（扫描/封面/下载），主线程仅做 UI 更新；单条消息异常不拖垮事件泵
+- **后台线程承担全部慢 IO**（扫描/封面/下载），主线程仅做 UI 更新；单条消息异常不拖垮事件泵
+- **多线程渲染**：封面书脊/圆角/投影合成与阅读页超采样渲染均在线程池完成
+  （`ui/render.py`），主线程只贴图；封面就绪后仅**局部重绘**该书副本，
+  大书库滚动与翻页不再卡顿。线程数可在设置中调整
 
 ## 文件结构
 
@@ -81,8 +102,10 @@ C:\Users\yohoten\AppData\Local\Programs\Python\Python312\python.exe app.py
 app.ico             应用图标（多分辨率 16–128px，标题栏/任务栏/Alt-Tab）
 launcher.bat        启动脚本（GBK+CRLF，自动探测解释器，支持 debug 模式）
 build.bat           打包脚本（PyInstaller → dist/PyShelf.exe 单文件）
+build.py            一键打包（环境/依赖自检 → UPX 压缩 → PyInstaller）
 PyShelf.spec        PyInstaller 配置
-app.py              入口（书架/阅读/书源切换、后台扫描与下载、持久化）
+requirements.txt    运行依赖（PyQt5 / PyMuPDF / Pillow）
+app.py              入口（书架/阅读/书源切换、后台扫描与下载、设置与持久化）
 core/models.py      Book/Bookmark/Highlight 数据模型
 core/library.py     Library 门面（SQLite 后端 + 旧 JSON 自动迁移 + 阅读会话）
 core/storage.py     SQLite 存储层（WAL、FTS5 书名索引、reading_sessions 统计）
@@ -91,11 +114,13 @@ core/engines.py     DocumentEngine 协议 + 引擎工厂（PDF / TXT / MD）
 core/pdf_engine.py  PyMuPDF 渲染/目录/高亮叠加/烛光滤镜
 core/sources.py     书源引擎（GitHub/arXiv/Gutenberg/直链/自定义规则）
 core/downloader.py  后台下载器（进度回报、备用通道）
-ui/theme.py         双主题（烛光·深 / 午后书房·浅）、DPI、木纹纹理、封面渲染
-ui/shelf_view.py    Canvas 拟物书架（纹理书架、悬停放大）
-ui/reader_view.py   阅读器（超采样渲染/翻页/缩放/书签/拖框高亮）
-ui/sidebar.py       目录/书签/高亮侧栏
-ui/source_view.py   书源检索面板
+ui/theme.py         双主题（烛光·深 / 午后书房·浅）、DPI、字体、QSS、木纹纹理、封面渲染
+ui/shelf_view.py    QWidget 自绘拟物书架（纹理书架、悬停放大、缓存底板、增量重绘）
+ui/reader_view.py   阅读器（后台超采样渲染/翻页/缩放/书签/拖框高亮）
+ui/sidebar.py       目录/书签/高亮侧栏（QTabWidget）
+ui/source_view.py   书源检索面板（QTableWidget）
+ui/settings_dialog.py 设置中心（外观/字体/阅读/性能/书源）
+ui/render.py        后台渲染服务（QThreadPool，PIL→QImage 回主线程）
 tests/              pytest 测试（scanner 清洗 / storage 迁移与统计 / engines 分派）
 .github/workflows/  CI：跑测试 + PyInstaller 打包并上传产物
 data/               运行时生成：library.db（SQLite）、settings.json、covers/*.png
@@ -121,8 +146,18 @@ python app.py --smoke           # UI 冒烟（9 秒后自动退出）
 ## 打包发布
 
 ```
-build.bat        # 或：python -m PyInstaller PyShelf.spec --noconfirm
+python build.py              # 推荐：环境自检 → UPX 压缩 → PyInstaller 打包
+python build.py --test       # 打包前先跑单元测试（失败则中止）
+python build.py --upx-dir D:\Tools\upx   # 指定 UPX 目录（默认 H:\UPX）
+python build.py --no-upx     # 关闭 UPX 压缩
+build.bat                    # 或：python -m PyInstaller PyShelf.spec --noconfirm
 ```
 
-产物为 `dist/PyShelf.exe` 单文件（约 40MB，免安装，双击即用；阅读数据存于 exe 同目录 `data/`）。
+产物为 `dist/PyShelf.exe` 单文件（免安装，双击即用；阅读数据存于 exe 同目录 `data/`，
+可直接把旧机器的 `data/` 整体拷到 exe 同目录完成迁移）。
+
+UPX 压缩需「可用 + 开启」双条件：`PyShelf.spec` 已置 `upx=True`，`build.py` 默认传入
+`H:\UPX` 作为 `--upx-dir`；换机或未装 UPX 时用 `--upx-dir` 指定目录，或 `--no-upx` 关闭
+（UPX 不可用会被自动跳过，不影响出包）。压缩对象是收集到的 DLL/.pyd，bootloader 不压缩。
+推送/PR 会触发 GitHub Actions（`.github/workflows/ci.yml`）：自动跑测试并打包 Windows 产物为构建附件。
 推送/PR 会触发 GitHub Actions（`.github/workflows/ci.yml`）：自动跑测试并打包 Windows 产物为构建附件。
